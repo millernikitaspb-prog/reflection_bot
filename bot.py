@@ -246,7 +246,9 @@ def get_system_prompt(style):
 Your goal is to help the user reflect on their thoughts, feelings and daily events.
 Ask deep but gentle questions. Do not give advice unless explicitly asked.
 Keep responses short - 2 to 4 sentences.
-Always respond in Russian, regardless of the langusge the user writes in."""
+Always respond in Russian, regardless of the langusge the user writes in.
+Do not use any markdown formatting, no asterisks, no bold, no bullet points. Plain text only.
+Use double line breaks between paragraphs."""
 
 def clean_response(text):
     if not text:
