@@ -1,0 +1,47 @@
+import psycopg2
+from config import DATABASE_URL
+
+def get_connection():
+	return psycopg2.connect(DATABASE_URL)
+
+def create_tables():
+	conn = get_connection()
+	cursor = conn.cursor()
+
+	cursor.execute("""
+		CREATE TABLE IF NOT EXISTS users(
+			telegram_id BIGINT PRIMARY KEY,
+			name TEXT,
+			age INTEGER,
+			style TEXT,
+			reminder_time TEXT,
+			timezone TEXT DEFAULT 'Europe/Moscow'
+		)
+	""")
+
+	cursor.execute("""
+		CREATE TABLE IF NOT EXISTS moods (
+			id SERIAL PRIMARY KEY,
+			telegram_id BIGINT,
+			score INTEGER,
+			created_at TIMESTAMP DEFAULT NOW()
+		)
+	""")
+
+	cursor.execute("""
+		CREATE TABLE IF NOT EXISTS messages (
+			id SERIAL PRIMARY KEY,
+			telegram_id BIGINT,
+			role TEXT,
+			content TEXT,
+			created_at TIMESTAMP DEFAULT NOW()
+		)
+	""")
+
+	conn.commit()
+	cursor.close()
+	conn.close()
+	print("Таблицы созданы успешно")
+
+if __name__ == "__main__":
+	create_tables()
