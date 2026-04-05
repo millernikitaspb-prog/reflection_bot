@@ -47,6 +47,20 @@ def start(message):
 def menu_command(message):
     show_main_menu(message.from_user.id)
 
+# --- RESET, ВРЕМЕННО!!! ---
+
+@bot.message_handler(commands=['reset'])
+def reset_data(message):
+    telegram_id = message.from_user.id 
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    bot.send_message(telegram_id, "История очищена. Начинаем заново")
+
+
 # --- ИМЯ ---
 
 def get_name(message):
