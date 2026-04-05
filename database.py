@@ -9,14 +9,14 @@ def create_tables():
 	cursor = conn.cursor()
 
 	cursor.execute("""
-		CREATE TABLE users(
+		CREATE TABLE IF NOT EXISTS users(
 			telegram_id BIGINT PRIMARY KEY,
 			name TEXT
 		)
 	""")
 
 	cursor.execute("""
-		CREATE TABLE messages (
+		CREATE TABLE IF NOT EXISTS messages (
 			id SERIAL PRIMARY KEY,
 			telegram_id BIGINT,
 			role TEXT,
@@ -28,7 +28,7 @@ def create_tables():
 	conn.commit()
 	cursor.close()
 	conn.close()
-	print("Таблицы сощданы успешно")
+	print("Таблицы созданы успешно")
 
 if __name__ == "__main__":
 	create_tables()
