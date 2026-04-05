@@ -360,7 +360,7 @@ Guidelines:
 def send_reminders():
     now_utc = datetime.now(pytz.utc).strftime("%H:%M")
 
-    if now_utc "17:00":
+    if now_utc != "17:00":
         return
 
     conn = get_connection()
