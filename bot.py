@@ -53,7 +53,7 @@ def get_name(message):
     telegram_id = message.from_user.id 
     user_data[telegram_id]['name'] = message.text 
 
-   save_user(telegram_id)
+    save_user(telegram_id)
 
 # --- СОХРАНЕНИЕ В БД ---
 
