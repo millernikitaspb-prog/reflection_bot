@@ -341,15 +341,14 @@ Guidelines:
         response = ai_client.chat.completions.create(
             model="anthropic/claude-haiku-4-5",
             messages=[
-                {"role": "system", "content": summary_prompt}
-            ] + history + [
-                {"role": "user", "content": "Сделай сводку моих записей в дневнике"}
+                {"role": "system", "content": summary_prompt},
+                {"role": "user", "content": "Вот история всех моих сессий с дневником:\n\n" + "\n".join([f"{'Я' if m['role'] == 'user' else 'Психолог'}: {m['content']}" for m in history]) + "\n\nСоставь мой психологический портрет на основе этих записей."}
             ],
             max_tokens=400
         )
         summary = response.choices[0].message.content
         bot.delete_message(telegram_id, thinking_msg.message_id)
-        bot.send_message(telegram_id, f"📖 Твоя история - это то, что я узнал о тебе из наших разговоров:\n\n{summary}")
+        bot.send_message(telegram_id, f"📖 Вот, что я узнал о тебе из наших разговоров:\n\n{summary}")
         show_main_menu(telegram_id)
     except Exception as e:
         print(f"Ошибка API (сводка): {e}")
