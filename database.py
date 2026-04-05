@@ -8,10 +8,6 @@ def create_tables():
 	conn = get_connection()
 	cursor = conn.cursor()
 
-	cursor.execute("DROP TABLE IF EXISTS messages")
-	cursor.execute("DROP TABLE IF EXISTS moods")
-	cursor.execute("DROP TABLE IF EXISTS users")
-
 	cursor.execute("""
 		CREATE TABLE users(
 			telegram_id BIGINT PRIMARY KEY,
