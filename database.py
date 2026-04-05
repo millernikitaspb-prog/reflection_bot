@@ -8,28 +8,19 @@ def create_tables():
 	conn = get_connection()
 	cursor = conn.cursor()
 
+	cursor.execute("DROP TABLE IF EXISTS messages")
+	cursor.execute("DROP TABLE IF EXISTS moods")
+	cursor.execute("DROP TABLE IF EXISTS users")
+
 	cursor.execute("""
-		CREATE TABLE IF NOT EXISTS users(
+		CREATE TABLE users(
 			telegram_id BIGINT PRIMARY KEY,
-			name TEXT,
-			age INTEGER,
-			style TEXT,
-			reminder_time TEXT,
-			timezone TEXT DEFAULT 'Europe/Moscow'
+			name TEXT
 		)
 	""")
 
 	cursor.execute("""
-		CREATE TABLE IF NOT EXISTS moods (
-			id SERIAL PRIMARY KEY,
-			telegram_id BIGINT,
-			score INTEGER,
-			created_at TIMESTAMP DEFAULT NOW()
-		)
-	""")
-
-	cursor.execute("""
-		CREATE TABLE IF NOT EXISTS messages (
+		CREATE TABLE messages (
 			id SERIAL PRIMARY KEY,
 			telegram_id BIGINT,
 			role TEXT,
@@ -41,7 +32,7 @@ def create_tables():
 	conn.commit()
 	cursor.close()
 	conn.close()
-	print("Таблицы созданы успешно")
+	print("Таблицы сощданы успешно")
 
 if __name__ == "__main__":
 	create_tables()
