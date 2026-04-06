@@ -290,6 +290,7 @@ def start_diary(telegram_id):
         bot.send_message(telegram_id, "Дневник уже открыт. Пиши сюда или напиши /menu чтобы выйти.")
         return 
 
+    style = "friendly"
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET in_diary = TRUE WHERE telegram_id = %s", (telegram_id,))
