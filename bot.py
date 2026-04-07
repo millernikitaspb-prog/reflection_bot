@@ -370,7 +370,7 @@ def end_diary_session(telegram_id):
             model="anthropic/claude-haiku-4-5",
             messages=[
             {"role": "system", "content": summary_prompt},
-            {"role": "user", "content:" "Вот история сессии:\n\n" + "\n".join(
+            {"role": "user", "content": "Вот история сессии:\n\n" + "\n".join(
                 [f"{'Клиент' if m['role'] == 'user' else 'Психолог'}: {m['content']}" for m in history]
             ) + "\n\nНапиши резюме этой сессии."}
             ],
