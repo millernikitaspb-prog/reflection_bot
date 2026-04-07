@@ -564,7 +564,7 @@ def send_reminders():
     global last_reminder_date
     now_msk = datetime.now(pytz.timezone("Europe/Moscow"))
 
-    if not_msk.hour != 20 or now_msk.minute != 0:
+    if now_msk.hour != 20 or now_msk.minute != 0:
         return
 
     today = now_msk.date()
