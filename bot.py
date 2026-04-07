@@ -51,6 +51,25 @@ def start(message):
 def menu_command(message):
     show_main_menu(message.from_user.id)
 
+# --- ЗАВЕРШЕНИЕ СЕССИИ ---
+
+@bot.message_handler(commands=['end'])
+def end_command(message):
+    telegram_id = message.from_user.id 
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    release_connection(conn)
+
+    if row and row[0]:
+        end_diary_session(telegram_id)
+    else:
+        bot.send_message(telegram_id, "Сейчас нет активной сессии дневника.")
+        show_main_menu(telegram_id)
+
 # --- RESET, ВРЕМЕННО!!! ---
 
 @bot.message_handler(commands=['reset'])
@@ -106,6 +125,7 @@ def show_main_menu(telegram_id):
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("📓 Дневник", callback_data="menu_diary"))
     markup.row(InlineKeyboardButton("📖 Моя история", callback_data="menu_profile"))
+    markup.row(InlineKeyboardButton("⚙️ Напоминание", callback_data="menu_reminders"))
     bot.send_message(telegram_id, "Главное меню:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
@@ -113,10 +133,23 @@ def handle_menu(call):
     telegram_id = call.from_user.id
     bot.answer_callback_query(call.id)
 
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    release_connection(conn)
+
+    if row and row[0]:
+        bot.send_message(telegram_id, "Сначала заверши сессию дневника - напиши /end или /menu")
+        return
+
     if call.data == "menu_diary":
         start_diary(telegram_id)
     elif call.data == "menu_profile":
         show_profile(telegram_id)
+    elif call.data == "menu_reminders":
+        show_reminders_menu(telegram_id)
 
 # --- ДНЕВНИК ---
 
@@ -306,8 +339,66 @@ def check_rate_limit(telegram_id):
     rate_limit[telegram_id].append(now)
     return True
 
+def end_diary_session(telegram_id):
+    history = get_history(telegram_id)
+
+    if not history:
+        bot.send_message(telegram_id, "Сессия пока что пуста.")
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
+        conn.commit()
+        cursor.close()
+        release_connection(conn)
+        show_main_menu(telegram_id)
+        return
+
+    thinking_msg = bot.send_message(telegram_id, "💭 Подвожу итоги...")
+
+    summary_prompt = """Ты мудрый, проницательный психолог. Пользователь завершает сессию дневника. Напиши резюме сессии.
+
+Пиши резюме как короткий связный абзац от своего лица — 3–5 предложений о том, что пользователь обнаружил за сессию. Опиши, что он чувствовал, какая мысль стояла за этим, что он осознал и что изменилось. Используй слова и выражения пользователя, но пиши это как своё наблюдение, а не как шаблон с полями.
+
+Пример тона: «За наш разговор вы увидели, что мысль “я всегда всё порчу” появляется каждый раз, когда вы получаете критику. Вы заметили, что на самом деле критика касалась конкретного проекта, а не вас как человека. Это помогло снизить тревогу — и вы решили поговорить с руководителем напрямую.»
+
+Резюме — не более 800 символов. Без форматирования, без буллетов, без полей.
+
+Заверши сессию тёплой, но краткой фразой — каждый раз новой. НЕ повторяй одну и ту же. Генерируй новую, подходящую именно к этой сессии."""
+
+    try:
+        response = ai_client.chat.completions.create(
+            model="anthropic/claude-haiku-4-5",
+            messages=[
+            {"role": "system", "content": summary_prompt},
+            {"role": "user", "content:" "Вот история сессии: \n\n" + "\n".join(
+                [f"{'Клиент' if m['role'] == 'user' else 'Психолог'}: {m['content']}" for m in history]
+            ) + "\n\nНапиши резюме этой сессии."}
+            ],
+            max_tokens=400,
+            timeout=30
+        )
+        summary = response.choices[0].message.content
+        bot.delete_message(telegram_id, thinking_msg.message_id)
+        bot.send_message(telegram_id, f"📝 Итог этой сессии:\n\n{summary}")
+    except Exception as e:
+        print(f"Ошибка API (резюме): {e}")
+        bot.delete_message(telegram_id, thinking_msg)
+        bot.send_message(telegram_id, "Не удалось подвести итог, но сессия завершена")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
+    conn.commit()
+    cursor.close()
+    release_connection(conn)
+    show_main_menu(telegram_id)
+
 def handle_diary_message(message, style):
     telegram_id = message.from_user.id
+
+    if message.text == "/end":
+        end_diary_session(telegram_id)
+        return
 
     if message.text == "/menu":
         conn = get_connection()
@@ -428,22 +519,69 @@ def show_profile(telegram_id):
         bot.send_message(telegram_id, "Что-то пошло не так... 😔 Попробуй позже.")
         show_main_menu(telegram_id)
 
-def send_reminders():
-    now_utc = datetime.now(pytz.utc).strftime("%H:%M")
+# --- НАПОМИНАНИЕ ---
 
-    if now_utc != "17:00":
+def show_reminders_menu(telegram_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT reminders_enabled FROM users WHERE telegram_id = %s", (telegram_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    release_connection(conn)
+
+    reminders_on = row[0] if row else True
+    status = "включены 🔔" if reminders_on else "выключены 🔕"
+    toggle_text = "Выключить 🔕" if reminders_on else "Включить 🔔"
+
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton(toggle_text, callback_data="toggle_reminders"))
+    markup.row(InlineKeyboardButton("⬅️ Назад", callback_data="back_to_menu"))
+    bot.send_message(telegram_id, f"Напоминания каждый день в 20:00\nСейчас: {status}", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["toggle_reminders", "back_to_menu"])
+def handle_reminders_menu(call):
+    telegram_id = call.from_user.id
+    bot.answer_callback_query(call.id)
+
+    if call.data == "toggle_reminders":
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT reminders_enabled FROM users WHERE telegram_id = %s", (telegram_id,))
+        current = cursor.fetchone()[0]
+        new_value = not current
+        cursor.execute("UPDATE users SET reminders_enabled = %s WHERE telegram_id = %s", (new_value, telegram_id))
+        conn.commit()
+        cursor.close()
+        release_connection(conn)
+        show_reminders_menu(telegram_id)
+
+    elif call.data == "back_to_menu":
+        show_main_menu(telegram_id)
+
+last_reminder_date = None
+
+def send_reminders():
+    global last_reminder_date
+    now_msk = datetime.now(pytz.timezone("Europe/Moscow"))
+
+    if not_msk.hour != 20 or now_msk.minute != 0:
         return
+
+    today = now_msk.date()
+    if last_reminder_date == today:
+        return
+    last_reminder_date = today
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT telegram_id, name FROM users")
+    cursor.execute("SELECT telegram_id, name FROM users WHERE reminders_enabled = TRUE")
     users = cursor.fetchall()
     cursor.close()
     release_connection(conn)
 
     for telegram_id, name in users:
-        try:
-            bot.send_message(telegram_id, f"Привет, {name}! ✨\n\nКак прошёл твой день?")
+        try: 
+            bot.send_message(telegram_id, f"Привет, {name}!✨\n\nКак прошёл твой день?")
         except Exception as e:
             print(f"Ошибка напоминания для {telegram_id}: {e}")
 

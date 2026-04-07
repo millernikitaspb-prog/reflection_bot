@@ -31,6 +31,26 @@ def create_tables():
 	""")
 
 	cursor.execute("""
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS reminders_enabled BOOLEAN DEFAULT TRUE 
+	""")
+
+	cursor.execute(""" 
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_today INTEGER DEFAULT 0
+	""")
+
+	cursor.execute("""
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS last_session_date DATE DEFAULT NULL
+	""")
+
+	cursor.execute("""
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN DEFAULT FALSE
+	""")
+
+	cursor.execute("""
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_end DATE DEFAULT NULL
+	""")
+
+	cursor.execute("""
 		CREATE TABLE IF NOT EXISTS messages (
 			id SERIAL PRIMARY KEY,
 			telegram_id BIGINT,
