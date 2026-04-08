@@ -121,8 +121,8 @@ def increment_session_count(telegram_id):
         else:
             cursor.execute("UPDATE users SET sessions_today = 1, last_session_date = %s WHERE telegram_id = %s", (today, telegram_id))
 
-        conn.commit()
-        cursor.close()
+    conn.commit()
+    cursor.close()
 
 # --- ПОДПИСКА ---
 

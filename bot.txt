@@ -8,7 +8,7 @@ from flask import Flask, request
 import telebot 
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import BOT_TOKEN, DATABASE_URL, OPENROUTER_API_KEY, ADMIN_IDS
-from database import create_tables, get_connection, release_connection
+from database import create_tables, get_connection, release_connection, db_connection
 from openai import OpenAI
 ai_client = OpenAI (
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -31,12 +31,11 @@ def start(message):
     telegram_id = message.from_user.id
 
     # --- ПРОВЕРЯЕМ РЕГИСТРАЦИЮ
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT telegram_id FROM users WHERE telegram_id = %s", (telegram_id,))
     user = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
 
     if user:
         bot.send_message(telegram_id, "С возвращением! Ты уже зарегистрирован ☑️")
@@ -50,12 +49,11 @@ def start(message):
 @bot.message_handler(commands=['menu'])
 def menu_command(message):
     telegram_id = message.from_user.id
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     cursor.close()
-    release_connection(conn)
     show_main_menu(telegram_id)
 
 # --- ЗАВЕРШЕНИЕ СЕССИИ ---
@@ -64,12 +62,11 @@ def menu_command(message):
 def end_command(message):
     telegram_id = message.from_user.id 
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
 
     if row and row[0]:
         end_diary_session(telegram_id)
@@ -87,7 +84,7 @@ def check_session_limit(telegram_id):
     if telegram_id in ADMIN_IDS:
         return True
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT sessions_today, last_session_date, is_subscribed, subscription_end
@@ -95,7 +92,6 @@ def check_session_limit(telegram_id):
     """, (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
     if not row:
         return False
 
@@ -115,7 +111,7 @@ def increment_session_count(telegram_id):
         return
 
     today = datetime.now().date()
-    conn = get_connection()
+    with db_connection() as conn: 
     cursor = conn.cursor()
     cursor.execute("SELECT last_session_date FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
@@ -127,7 +123,6 @@ def increment_session_count(telegram_id):
 
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
 # --- ПОДПИСКА ---
 
@@ -171,7 +166,7 @@ def handle_succesfuly_payment(message):
     from datetime import timedelta
     subscription_end = (datetime.now() + timedelta(days=30)).date()
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE users
@@ -180,7 +175,6 @@ def handle_succesfuly_payment(message):
     """, (subscription_end, telegram_id))
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
     print(f"Оплата: {telegram_id}, payment_id: {payment_id}")
 
@@ -192,12 +186,11 @@ def handle_succesfuly_payment(message):
 @bot.message_handler(commands=['reset'])
 def reset_data(message):
     telegram_id = message.from_user.id 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     cursor.close()
-    release_connection(conn)
     bot.send_message(telegram_id, "История очищена. Начинаем заново")
 
 
@@ -223,7 +216,7 @@ def get_name(message):
 # --- СОХРАНЕНИЕ В БД ---
 
 def save_user(telegram_id, name):
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO users (telegram_id, name)
@@ -231,7 +224,6 @@ def save_user(telegram_id, name):
     """, (telegram_id, name))
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
     bot.send_message(telegram_id, f"Приятно познакомиться, {name}! 🪐")
     show_main_menu(telegram_id)
@@ -250,12 +242,14 @@ def handle_menu(call):
     telegram_id = call.from_user.id
     bot.answer_callback_query(call.id)
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
+
+    if not row:
+        bot.send_message(telegram_id, "Напиши /start чтобы начать 💫")
 
     if row and row[0]:
         bot.send_message(telegram_id, "Сначала заверши сессию дневника - напиши /end или /menu")
@@ -430,12 +424,11 @@ def get_system_prompt():
 Заверши сессию тёплой, но краткой фразой — каждый раз новой. НЕ повторяй одну и ту же. Генерируй новую, подходящую именно к этой сессии."""
 
 def start_diary(telegram_id):
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
 
     if row and row[0]:
         bot.send_message(telegram_id, "Дневник уже открыт. Пиши сюда или напиши /menu чтобы выйти.")
@@ -444,21 +437,19 @@ def start_diary(telegram_id):
         show_paywall(telegram_id)
         return
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET in_diary = TRUE WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
     increment_session_count(telegram_id)
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
     bot.send_message(telegram_id, "📓 Дневник открыт. Расскажи, как прошёл твой день или что у тебя на душе.\n\nЧтобы выйти в меню, напиши /menu")
 
@@ -475,7 +466,7 @@ def end_diary_session(telegram_id):
 
     if not history:
         bot.send_message(telegram_id, "Сессия пока что пуста.")
-        conn = get_connection()
+        with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO diary_logs (telegram_id, role, content, session_date)
@@ -486,7 +477,6 @@ def end_diary_session(telegram_id):
         cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
         conn.commit()
         cursor.close()
-        release_connection(conn)
         show_main_menu(telegram_id)
         return
 
@@ -522,19 +512,18 @@ def end_diary_session(telegram_id):
         bot.delete_message(telegram_id, thinking_msg.message_id)
         bot.send_message(telegram_id, "Не удалось подвести итог, но сессия завершена")
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO diary_logs (telegram_id, role, content, session_date)
-            SELECT telegram_id, role, content, created_at FROM messages
-            WHERE telegram_id = %s 
-        """, (telegram_id,))
-        cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
-        cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
-        conn.commit()
-        cursor.close()
-        release_connection(conn)
-        show_main_menu(telegram_id)
+    with db_connection() as conn:
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO diary_logs (telegram_id, role, content, session_date)
+        SELECT telegram_id, role, content, created_at FROM messages
+        WHERE telegram_id = %s 
+    """, (telegram_id,))
+    cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
+    cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
+    conn.commit()
+    cursor.close()
+    show_main_menu(telegram_id)
 
 def handle_diary_message(message):
     telegram_id = message.from_user.id
@@ -544,12 +533,11 @@ def handle_diary_message(message):
         return
 
     if message.text == "/menu":
-        conn = get_connection()
+        with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
         conn.commit()
         cursor.close()
-        release_connection(conn)
         show_main_menu(telegram_id)
         return
 
@@ -563,12 +551,11 @@ def handle_diary_message(message):
 
     save_message(telegram_id, "user", message.text)
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM messages WHERE telegram_id = %s AND role = 'user'", (telegram_id,))
     count = cursor.fetchone()[0]
     cursor.close()
-    release_connection(conn)
 
     if count >= SESSION_MESSAGE_LIMIT:
         bot.send_message(telegram_id, "Сессия подходит к концу - давайте подведем итог 🌙")
@@ -596,7 +583,7 @@ def handle_diary_message(message):
         bot.send_message(telegram_id, "Что-то пошло не так... 😔 Попробуй ещё раз.")
 
 def save_message(telegram_id, role, content):
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO messages (telegram_id, role, content) VALUES (%s, %s, %s)",
@@ -604,10 +591,9 @@ def save_message(telegram_id, role, content):
     )
     conn.commit()
     cursor.close()
-    release_connection(conn)
 
 def get_history(telegram_id, limit=10):
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT role, content FROM ( 
@@ -620,7 +606,6 @@ def get_history(telegram_id, limit=10):
     """, (telegram_id, limit))
     rows = cursor.fetchall()
     cursor.close()
-    release_connection(conn)
 
     return [{"role": r[0], "content": r[1]} for r in rows]
 
@@ -628,7 +613,7 @@ def get_history(telegram_id, limit=10):
 
 def show_profile(telegram_id):
     # AI-сводка
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT role, content FROM diary_logs
@@ -638,7 +623,6 @@ def show_profile(telegram_id):
     """, (telegram_id,))
     rows = cursor.fetchall()
     cursor.close()
-    release_connection(conn)
 
     history = [{"role": r[0], "content": r[1]} for r in rows]
 
@@ -679,7 +663,8 @@ def show_profile(telegram_id):
                 {"role": "system", "content": summary_prompt},
                 {"role": "user", "content": "Вот история всех моих сессий с дневником:\n\n" + "\n".join([f"{'Я' if m['role'] == 'user' else 'Психолог'}: {m['content']}" for m in history]) + "\n\nСоставь мой психологический портрет на основе этих записей."}
             ],
-            max_tokens=400
+            max_tokens=400,
+            timeout=30
         )
         summary = response.choices[0].message.content
         bot.delete_message(telegram_id, thinking_msg.message_id)
@@ -694,12 +679,11 @@ def show_profile(telegram_id):
 # --- НАПОМИНАНИЕ ---
 
 def show_reminders_menu(telegram_id):
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT reminders_enabled FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
 
     reminders_on = row[0] if row else True
     status = "включены 🔔" if reminders_on else "выключены 🔕"
@@ -716,7 +700,7 @@ def handle_reminders_menu(call):
     bot.answer_callback_query(call.id)
 
     if call.data == "toggle_reminders":
-        conn = get_connection()
+        with db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT reminders_enabled FROM users WHERE telegram_id = %s", (telegram_id,))
         current = cursor.fetchone()[0]
@@ -724,7 +708,6 @@ def handle_reminders_menu(call):
         cursor.execute("UPDATE users SET reminders_enabled = %s WHERE telegram_id = %s", (new_value, telegram_id))
         conn.commit()
         cursor.close()
-        release_connection(conn)
         show_reminders_menu(telegram_id)
 
     elif call.data == "back_to_menu":
@@ -744,12 +727,11 @@ def send_reminders():
         return
     last_reminder_date = today
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT telegram_id, name FROM users WHERE reminders_enabled = TRUE")
     users = cursor.fetchall()
     cursor.close()
-    release_connection(conn)
 
     for telegram_id, name in users:
         try: 
@@ -767,12 +749,11 @@ def run_scheduler():
 def fallback_handler(message):
     telegram_id = message.from_user.id
 
-    conn = get_connection()
+    with db_connection() as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT in_diary FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     cursor.close()
-    release_connection(conn)
 
     if not row:
         bot.send_message(telegram_id, "Привет! Напиши /start чтобы начать ✨")
