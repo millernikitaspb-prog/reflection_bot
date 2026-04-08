@@ -60,6 +60,16 @@ def create_tables():
 		)
 	""")
 
+	cursor.execute("""
+		CREATE TABLE IF NOT EXISTS diary_logs (
+			id SERIAL PRIMARY KEY,
+			telegram_id BIGINT,
+			role TEXT,
+			content TEXT,
+			session_date TIMESTAMP DEFAULT NOW()
+		)
+	""")
+
 	conn.commit()
 	cursor.close()
 	release_connection(conn)

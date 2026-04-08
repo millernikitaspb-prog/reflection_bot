@@ -21,7 +21,7 @@ app = Flask(__name__)
 # --- АНТИ-СПАМ ---
 from collections import defaultdict
 rate_limit = defaultdict(list)
-RATE_LIMIT_MAX = 60
+RATE_LIMIT_MAX = 25
 RATE_LIMIT_SECONDS = 3600
 
 # --- СТАРТ --- 
@@ -77,9 +77,11 @@ def end_command(message):
         bot.send_message(telegram_id, "Сейчас нет активной сессии дневника.")
         show_main_menu(telegram_id)
 
-# --- ЛИМИТ СЕССИЙ ---
+# --- ЛИМИТЫ ---
 
-FREE_SESSIONS_LIMIT = 1
+FREE_SESSIONS_LIMIT = 2
+
+SESSION_MESSAGE_LIMIT = 10
 
 def check_session_limit(telegram_id):
     if telegram_id in ADMIN_IDS:
@@ -119,7 +121,7 @@ def increment_session_count(telegram_id):
     row = cursor.fetchone()
 
     if row and row[0] == today:
-        cursor.execute("UPDATE users SET sessions_today = sessions_today + 1 WHERE telegram_id = %s", (today, telegram_id))
+        cursor.execute("UPDATE users SET sessions_today = sessions_today + 1 WHERE telegram_id = %s", (telegram_id,))
     else:
         cursor.execute("UPDATE users SET sessions_today = 1, last_session_date = %s WHERE telegram_id = %s", (today, telegram_id))
 
@@ -129,14 +131,14 @@ def increment_session_count(telegram_id):
 
 # --- ПОДПИСКА ---
 
-SUBSCRIPTION_PRICE = 100
+SUBSCRIPTION_PRICE = 150
 
 def show_paywall(telegram_id):
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("⭐️ Подписка (100 stars)", callback_data="buy_subscription"))
+    markup.row(InlineKeyboardButton("⭐️ Подписка (150 stars)", callback_data="buy_subscription"))
     bot.send_message(
         telegram_id,
-        "На сегодня бесплатные сессии закончились 🌙\n\n""Подписка снимает лимит на 30 дней.\n""Стоимость: 100 ⭐️",
+        "На сегодня 2 бесплатные сессии закончились 🌙\n\nПодписка снимает лимит на 30 дней.\nСтоимость: 150 ⭐️",
         reply_markup=markup
     )
 
@@ -255,6 +257,9 @@ def handle_menu(call):
     cursor.close()
     release_connection(conn)
 
+    if not row:
+        bot.send_message(telegram_id, "Напиши /start чтобы начать 💫")
+
     if row and row[0]:
         bot.send_message(telegram_id, "Сначала заверши сессию дневника - напиши /end или /menu")
         return
@@ -268,10 +273,7 @@ def handle_menu(call):
 
 # --- ДНЕВНИК ---
 
-def get_system_prompt(style):
-    if style == "friendly":
-        tone = "Use a warm, friendly tone. Speak simply and naturally."
-
+def get_system_prompt():
     return f"""Ты — ИИ-помощник для самоанализа в Telegram. Ты НЕ психолог, НЕ терапевт и НЕ человек. Твоя задача — помогать людям лучше понимать свои мысли, эмоции и поведение в социальных ситуациях, используя проверенные психологические техники. Если тебя спросят, кто ты — ответь: «Я ИИ-помощник для самоанализа. Я не психолог и не заменяю специалиста, но могу помочь вам разобраться в мыслях и чувствах.»
 
 ## Твоя личность
@@ -451,7 +453,16 @@ def start_diary(telegram_id):
     conn.commit()
     cursor.close()
     release_connection(conn)
+
     increment_session_count(telegram_id)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
+    conn.commit()
+    cursor.close()
+    release_connection(conn)
+
     bot.send_message(telegram_id, "📓 Дневник открыт. Расскажи, как прошёл твой день или что у тебя на душе.\n\nЧтобы выйти в меню, напиши /menu")
 
 def check_rate_limit(telegram_id):
@@ -469,6 +480,12 @@ def end_diary_session(telegram_id):
         bot.send_message(telegram_id, "Сессия пока что пуста.")
         conn = get_connection()
         cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO diary_logs (telegram_id, role, content, session_date)
+            SELECT telegram_id, role, content, created_at FROM messages
+            WHERE telegram_id = %s 
+        """, (telegram_id,))
+        cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
         cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
         conn.commit()
         cursor.close()
@@ -505,18 +522,24 @@ def end_diary_session(telegram_id):
         bot.send_message(telegram_id, f"📝 Итог этой сессии:\n\n{summary}")
     except Exception as e:
         print(f"Ошибка API (резюме): {e}")
-        bot.delete_message(telegram_id, thinking_msg)
+        bot.delete_message(telegram_id, thinking_msg.message_id)
         bot.send_message(telegram_id, "Не удалось подвести итог, но сессия завершена")
 
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO diary_logs (telegram_id, role, content, session_date)
+        SELECT telegram_id, role, content, created_at FROM messages
+        WHERE telegram_id = %s 
+    """, (telegram_id,))
+    cursor.execute("DELETE FROM messages WHERE telegram_id = %s", (telegram_id,))
     cursor.execute("UPDATE users SET in_diary = FALSE WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     cursor.close()
     release_connection(conn)
     show_main_menu(telegram_id)
 
-def handle_diary_message(message, style):
+def handle_diary_message(message):
     telegram_id = message.from_user.id
 
     if message.text == "/end":
@@ -537,7 +560,23 @@ def handle_diary_message(message, style):
         bot.send_message(telegram_id, "Ты отправляешь слишком много сообщений. Давай сделаем паузу и вернёмся через некоторое время 💫")
         return
 
+    if not message.text:
+        bot.send_message(telegram_id, "Я пока понимаю только текст 💫")
+        return
+
     save_message(telegram_id, "user", message.text)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM messages WHERE telegram_id = %s AND role = 'user'", (telegram_id,))
+    count = cursor.fetchone()[0]
+    cursor.close()
+    release_connection(conn)
+
+    if count >= SESSION_MESSAGE_LIMIT:
+        bot.send_message(telegram_id, "Сессия подходит к концу - давайте подведем итог 🌙")
+        end_diary_session(telegram_id)
+        return
 
     history = get_history(telegram_id)
 
@@ -546,7 +585,7 @@ def handle_diary_message(message, style):
     try:
         response = ai_client.chat.completions.create(
             model="anthropic/claude-haiku-4-5",
-            messages=[{"role": "system", "content": get_system_prompt(style)}] + history,
+            messages=[{"role": "system", "content": get_system_prompt()}] + history,
             max_tokens=300,
             timeout=30
         )
@@ -592,7 +631,20 @@ def get_history(telegram_id, limit=10):
 
 def show_profile(telegram_id):
     # AI-сводка
-    history = get_history(telegram_id, limit=20)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT role, content FROM diary_logs
+        WHERE telegram_id = %s
+        ORDER BY session_date DESC
+        LIMIT 50
+    """, (telegram_id,))
+    rows = cursor.fetchall()
+    cursor.close()
+    release_connection(conn)
+
+    history = [{"role": r[0], "content": r[1]} for r in rows]
+
     if not history:
         bot.send_message(telegram_id, "📓 Дневник пока пустой - начни диалог!")
         show_main_menu(telegram_id)
@@ -630,7 +682,8 @@ def show_profile(telegram_id):
                 {"role": "system", "content": summary_prompt},
                 {"role": "user", "content": "Вот история всех моих сессий с дневником:\n\n" + "\n".join([f"{'Я' if m['role'] == 'user' else 'Психолог'}: {m['content']}" for m in history]) + "\n\nСоставь мой психологический портрет на основе этих записей."}
             ],
-            max_tokens=400
+            max_tokens=400,
+            timeout=30
         )
         summary = response.choices[0].message.content
         bot.delete_message(telegram_id, thinking_msg.message_id)
@@ -725,8 +778,12 @@ def fallback_handler(message):
     cursor.close()
     release_connection(conn)
 
+    if not row:
+        bot.send_message(telegram_id, "Привет! Напиши /start чтобы начать ✨")
+        return
+
     if row and row[0]:
-        handle_diary_message(message, "friendly")
+        handle_diary_message(message)
     else:
         show_main_menu(telegram_id)
 
