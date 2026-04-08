@@ -21,7 +21,7 @@ app = Flask(__name__)
 # --- АНТИ-СПАМ ---
 from collections import defaultdict
 rate_limit = defaultdict(list)
-RATE_LIMIT_MAX = 25
+RATE_LIMIT_MAX = 100
 RATE_LIMIT_SECONDS = 3600
 
 # --- СТАРТ --- 
@@ -78,7 +78,7 @@ def end_command(message):
 
 FREE_SESSIONS_LIMIT = 2
 
-SESSION_MESSAGE_LIMIT = 10
+SESSION_MESSAGE_LIMIT = 100
 
 def check_session_limit(telegram_id):
     if telegram_id in ADMIN_IDS:
